@@ -2,8 +2,8 @@ package generate
 
 import (
 	"bytes"
+	"embed"
 	"fmt"
-	"log"
 	"path/filepath"
 	"text/template"
 )
@@ -16,27 +16,81 @@ type Config struct {
 	LocalBundle string
 }
 
-// Object ...
-type Object struct {
-	Language     []string
-	BufferLang   map[string]string
-	BufferBundle map[string]string
-	Editor       string
-	Config       *Config
-	Version      string
+// Theme ...
+type Theme struct {
+	Bundle     string
+	Coloscheme string
 }
 
-// VimBuffer ...
-var VimBuffer bytes.Buffer
+// Object ...
+type Object struct {
+	Language        []string
+	Frameworks      []string
+	Theme           string
+	BufferLang      map[string]string
+	BufferFramework map[string]string
+	BufferTheme     Theme
+	BufferBundle    map[string]string
+	Editor          string
+	Config          *Config
+	Version         string
+}
 
-// Generate ...
+//go:embed vim_template/vimrc
+var vimrc string
+
+//go:embed vim_template
+var vimTemplate embed.FS
+
+func buff(list []string, t string) (mList, mBundle map[string]string) {
+	mList = make(map[string]string)
+	mBundle = make(map[string]string)
+	for _, name := range list {
+		for _, ext := range []string{"bundle", "vim"} {
+			filePath := fmt.Sprintf("vim_template/%s/%s/%s.%s", t, name, name, ext)
+			read, _ := vimTemplate.ReadFile(filePath)
+			if ext == "vim" {
+				mList[name] = string(read)
+			} else {
+				mBundle[name] = string(read)
+			}
+		}
+	}
+	return
+}
+
+// ListLangs on folder langs
+func ListLangs() (list []string) {
+	files, _ := vimTemplate.ReadDir("vim_template/langs")
+	for _, f := range files {
+		list = append(list, f.Name())
+	}
+	return
+}
+
+// ListFrameworks on folder frameworks
+func ListFrameworks() (list []string) {
+	files, _ := vimTemplate.ReadDir("vim_template/frameworks")
+	for _, f := range files {
+		list = append(list, f.Name())
+	}
+	return
+}
+
+// ListThemes on folder themes
+func ListThemes() (list []string) {
+	files, _ := vimTemplate.ReadDir("vim_template/themes")
+	for _, f := range files {
+		list = append(list, f.Name())
+	}
+	return
+}
+
+// Generate file from configurations
 func Generate(obj *Object) (buffer string) {
-	// Clean VimBuffer, not append old result
-	VimBuffer.Reset()
-
 	config := Config{}
 	switch obj.Editor {
-	case "nvim":
+	case "nvim", "neovim":
 		config.BaseDir = "~/.config/nvim"
 		config.Rc = filepath.Join(config.BaseDir, "init.vim")
 		config.LocalRc = filepath.Join(config.BaseDir, "local_init.vim")
@@ -50,29 +104,26 @@ func Generate(obj *Object) (buffer string) {
 
 	obj.Config = &config
 
-	mLang := make(map[string]string)
-	mBundle := make(map[string]string)
-	for _, lang := range obj.Language {
-		for _, ext := range []string{"bundle", "vim"} {
-			filePath := fmt.Sprintf("vim_template/langs/%s/%s.%s", lang, lang, ext)
-			read, _ := Asset(filePath)
-			if ext == "vim" {
-				mLang[lang] = string(read)
-			} else {
-				mBundle[lang] = string(read)
-			}
-		}
-	}
+	mLang, mBundle := buff(obj.Language, "langs")
 	obj.BufferLang = mLang
+
+	mFrameworks, bundles := buff(obj.Frameworks, "frameworks")
+	obj.BufferFramework = mFrameworks
+
+	choosenThemes := []string{obj.Theme}
+	mThemes, tBundles := buff(choosenThemes, "themes")
+	obj.BufferTheme.Bundle = tBundles[obj.Theme]
+	obj.BufferTheme.Coloscheme = mThemes[obj.Theme]
+
+	for k, v := range bundles {
+		mBundle[k] = v
+	}
 	obj.BufferBundle = mBundle
 
-	vimrc, err := Asset("vim_template/vimrc")
-	if err != nil {
-		log.Fatal(err)
-	}
-	t := template.Must(template.New("vimrc").Parse(string(vimrc)))
-	t.Execute(&VimBuffer, obj)
+	var vimBuffer bytes.Buffer
+	t := template.Must(template.New("vimrc").Parse(vimrc))
+	t.Execute(&vimBuffer, obj)
 
-	buffer = VimBuffer.String()
+	buffer = vimBuffer.String()
 	return
 }
